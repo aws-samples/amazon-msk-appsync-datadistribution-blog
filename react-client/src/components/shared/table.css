@@ -1,0 +1,36 @@
+ 
+
+/* adding test code */
+
+.tesla-bg{
+    background-color: #e82127 !important ;
+}
+.amazon-bg{
+    background-color: #FF9900 !important;
+    
+}
+.green{
+    font-weight: bold !important;
+    color: green  !important;
+}
+.red{
+    font-weight: 700 !important;
+    color: red !important;
+}
+
+.percentRed{
+    background-color: rgb(255, 163, 163) !important ;
+    color: rgb(172, 3, 3) !important
+}
+.percentGreen{
+    background-color: rgb(126, 197, 126) !important ;
+    color: rgb(1, 66, 1) !important
+}
+
+.text-success{
+    color: green;
+}
+.text-danger{
+    color: red;
+}
+

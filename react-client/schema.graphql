@@ -1,0 +1,22 @@
+﻿schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+type Channel {
+  data: AWSJSON
+  name: String
+}
+
+type Mutation {
+  publish(data: AWSJSON!, name: String!): Channel
+}
+
+type Query {
+  getChannel: Channel
+}
+
+type Subscription {
+  subscribe(filter: String): Channel @aws_subscribe(mutations : ["publish"])
+}

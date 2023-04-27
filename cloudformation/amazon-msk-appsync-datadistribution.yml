@@ -1,0 +1,1171 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Cfn template for infrastructure for realtime data distribution
+Parameters:
+  project:
+    Type: String
+    Default: ddb
+    Description: Project name
+  awsEnv:
+    Type: String
+    Default: qa
+    AllowedValues: [dev, qa, uat, prod]
+    Description: Environment name
+  vpcCidr:
+    Type: String
+    Default: 10.1.0.0/16
+    Description: An IPv4 CIDR block to associate with the VPC
+  enableDnsSupport:
+    Type: String
+    Default: true
+    AllowedValues: [true, false]
+    Description: Indicates whether the DNS resolution is supported for the VPC
+  enableDnsHostnames:
+    Type: String
+    Default: true
+    AllowedValues: [true, false]
+    Description: Indicates whether the instances launched in the VPC get DNS hostnames
+  publicSubnet1Cidr:
+    Type: String
+    Default: 10.1.10.0/24
+    Description: The IPv4 CIDR block assigned to the public subnet 1
+  publicSubnet2Cidr:
+    Type: String
+    Default: 10.1.20.0/24
+    Description: The IPv4 CIDR block assigned to the public subnet 2
+  privateSubnet1Cidr:
+    Type: String
+    Default: 10.1.50.0/24
+    Description: The IPv4 CIDR block assigned to the private subnet 1
+  privateSubnet2Cidr:
+    Type: String
+    Default: 10.1.60.0/24
+    Description: The IPv4 CIDR block assigned to the private subnet 2
+  mskClusterInstanceType:
+    Type: String
+    Default: kafka.t3.small
+    AllowedValues: 
+      - kafka.t3.small 
+      - kafka.m5.large
+      - kafka.m5.xlarge
+      - kafka.m5.2xlarge
+      - kafka.m5.4xlarge
+      - kafka.m5.8xlarge
+      - kafka.m5.12xlarge
+      - kafka.m5.16xlarge
+      - kafka.m5.24xlarge
+    Description: The type of Amazon EC2 instances to use for brokers  
+  mskClusterEbsVolumeSize:
+    Type: Number
+    Default: 100
+    Description: The size in GiB of the EBS volume for the data drive on each broker node
+  mskClusterEnhancedMonitoring:
+    Type: String
+    Default: DEFAULT
+    AllowedValues: [PER_TOPIC_PER_BROKER, PER_BROKER, DEFAULT]
+    Description: Specifies the level of monitoring for the MSK cluster
+  KafkaClientEC2instanceType:
+    Type: String
+    Default: t2.micro
+    Description: The ec2 instance type for kafka client
+  KafkaClientEC2InstanceImageId:
+    Type: String
+    Default: ami-0dfcb1ef8550277af
+    Description: The ID of the AMI for kafka client ec2 instance
+  appSyncApiResolverFunctionName:
+    Type: String
+    Default: appSyncApiSubscriptionResolver
+    Description: The name of the function for subscription resolver
+  mskClusterSecretUsername:
+    Type: String
+    Default: ddbuser
+    Description: The secret string username of mskcluster secret
+
+Resources:
+  vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref vpcCidr
+      EnableDnsSupport: !Ref enableDnsSupport
+      EnableDnsHostnames: !Ref enableDnsHostnames
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-vpc-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  internetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: vpc
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-internetGateway-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  internetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref vpc
+      InternetGatewayId: !Ref internetGateway
+  publicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref vpc
+      MapPublicIpOnLaunch: True
+      CidrBlock: !Ref publicSubnet1Cidr
+      AvailabilityZone: !Select [ 0, !GetAZs ]     
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-publicSubnet1-${AWS::Region}-${publicSubnet1Cidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  publicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref vpc
+      MapPublicIpOnLaunch: True
+      CidrBlock: !Ref publicSubnet2Cidr
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-publicSubnet2-${AWS::Region}-${publicSubnet2Cidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  privateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref vpc
+      CidrBlock: !Ref privateSubnet1Cidr
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-privateSubnet1-${AWS::Region}-${privateSubnet1Cidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  privateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref vpc
+      CidrBlock: !Ref privateSubnet2Cidr
+      AvailabilityZone: !Select [ 1, !GetAZs ] 
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-privateSubnet2-${AWS::Region}-${privateSubnet2Cidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  publicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-publicRouteTable-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  publicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: internetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref publicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref internetGateway
+  publicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref publicRouteTable
+      SubnetId: !Ref publicSubnet1
+  publicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref publicRouteTable
+      SubnetId: !Ref publicSubnet2
+  natGatewayEip:
+    Type: AWS::EC2::EIP
+    DependsOn: internetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-natGatewayEip-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  natGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt natGatewayEip.AllocationId
+      SubnetId: !Ref publicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-natGateway-${AWS::Region}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  privateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-privateRouteTable1-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  privateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref privateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref natGateway
+  privateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref privateRouteTable1
+      SubnetId: !Ref privateSubnet1
+  privateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-privateRouteTable2-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  privateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref privateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref natGateway
+  privateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref privateRouteTable2
+      SubnetId: !Ref privateSubnet2
+  publicSubnetsNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-publicSubnetsNacl-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  publicSubnetsInboundRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref publicSubnetsNacl
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+  publicSubnetsOutboundRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref publicSubnetsNacl
+      RuleNumber: 120
+      Protocol: -1
+      Egress: True
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+  publicSubnet1NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref publicSubnet1
+      NetworkAclId: !Ref publicSubnetsNacl
+  publicSubnet2NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref publicSubnet2
+      NetworkAclId: !Ref publicSubnetsNacl
+  privateSubnetsNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-privateSubnetsNacl-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  privateSubnetsInboundRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref privateSubnetsNacl
+      RuleNumber: 140
+      Protocol: -1
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+  privateSubnetOutboundRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref privateSubnetsNacl
+      RuleNumber: 150
+      Protocol: -1
+      Egress: True
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0  
+  privateSubnet1NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref privateSubnet1
+      NetworkAclId: !Ref privateSubnetsNacl
+  privateSubnet2NetworkAclAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref privateSubnet2
+      NetworkAclId: !Ref privateSubnetsNacl
+  kafkaClientInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      VpcId: !Ref vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-kafkaClientInstanceSecurityGroup-${AWS::Region}-${vpcCidr}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  kafkaClientInstanceIngressAllowRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: kafkaClientInstanceSecurityGroup
+    Properties:
+      GroupId: !GetAtt kafkaClientInstanceSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: 0.0.0.0/0
+  kafkaClientInstanceEgressAllowRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: kafkaClientInstanceSecurityGroup
+    Properties:
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+      GroupId: !GetAtt kafkaClientInstanceSecurityGroup.GroupId
+  lambdaSecurityGroup:
+    DependsOn: vpc
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:  !Ref vpc
+      GroupDescription: A security group for lambda function
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-lambdaSecurityGroup-${AWS::Region}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  lambdaSecurityGroupHttpAllowRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: lambdaSecurityGroup
+    Properties:
+      GroupId: !Ref lambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: 0.0.0.0/0
+  lambdaSecurityGroupHttpsAllowRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: lambdaSecurityGroup
+    Properties:
+      GroupId: !Ref lambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+  lambdaSecurityGroupEgressAllowRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: mskClusterSecurityGroup
+    Properties:
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+      GroupId: !Ref lambdaSecurityGroup
+  mskClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:  !Ref vpc
+      GroupDescription: A security group that allows all trffic from kafkaClientInstanceSecurityGroup and lambdaSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${project}-${awsEnv}-mskClusterSecurityGroup-${AWS::Region}
+        - Key: project
+          Value: !Ref project
+        - Key: environment
+          Value: !Ref awsEnv
+  mskClusterKafkaClientInstanceIngressAllowRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: mskClusterSecurityGroup
+    Properties:
+      GroupId: !Ref mskClusterSecurityGroup
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref kafkaClientInstanceSecurityGroup
+  mskClusterLambdaIngressAllowRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: mskClusterSecurityGroup
+    Properties:
+      GroupId: !Ref mskClusterSecurityGroup
+      IpProtocol: tcp
+      FromPort: 9092
+      ToPort: 9098
+      SourceSecurityGroupId: !Ref lambdaSecurityGroup
+  mskClusterSelfIngressAllowRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: mskClusterSecurityGroup
+    Properties:
+      GroupId: !Ref mskClusterSecurityGroup
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref mskClusterSecurityGroup
+  mskClusterEgressAllowRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: mskClusterSecurityGroup
+    Properties:
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+      GroupId: !Ref mskClusterSecurityGroup
+  mskCluster:
+    Type: AWS::MSK::Cluster
+    Properties:
+      BrokerNodeGroupInfo:
+        ClientSubnets:
+          - Ref: privateSubnet1
+          - Ref: privateSubnet2
+        InstanceType: !Ref mskClusterInstanceType
+        SecurityGroups:
+          - !GetAtt mskClusterSecurityGroup.GroupId
+        StorageInfo:
+          EBSStorageInfo:
+            VolumeSize: !Ref mskClusterEbsVolumeSize
+      ClusterName: !Sub ${project}-${awsEnv}-mskCluster-${AWS::Region}
+      KafkaVersion: 2.8.1
+      NumberOfBrokerNodes: 2
+      EncryptionInfo:
+        EncryptionInTransit:
+          ClientBroker: TLS
+          InCluster: true
+      EnhancedMonitoring: !Ref mskClusterEnhancedMonitoring
+      ClientAuthentication:
+        Sasl:
+          Scram:
+            Enabled: true
+  KafkaClientEC2InstanceIamRole: 
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${project}-${awsEnv}-KafkaClientEC2InstanceRole-${AWS::Region}
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+          - Sid: KafkaClientEc2InstanceIamRole
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: MSKConfigurationAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - kafka:ListClusters
+                - kafka:DescribeCluster
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - ec2:DescribeInstanceAttribute
+                - ec2:ModifyInstanceAttribute
+                - ec2:DescribeSecurityGroups
+                - ec2:DescribeSubnets
+                - ec2:DescribeTags
+                - kafka-cluster:*Topic*
+                - kafka-cluster:Connect
+                - kafka-cluster:AlterCluster
+                - kafka-cluster:DescribeCluster
+                - kafka-cluster:DescribeClusterDynamicConfiguration
+                - kafka-cluster:*Topic*
+                - kafka-cluster:WriteData
+                - kafka-cluster:ReadData
+                - kafka-cluster:AlterGroup
+                - kafka-cluster:DescribeGroup
+                - kafka:GetBootstrapBrokers
+              Resource:
+                - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:cluster/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:topic/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:group/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+  eC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref KafkaClientEC2InstanceIamRole
+  KafkaClientEC2Instance:
+    DependsOn: mskCluster
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref KafkaClientEC2instanceType
+      IamInstanceProfile: !Ref eC2InstanceProfile
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      SubnetId: !Ref publicSubnet1
+      SecurityGroupIds:
+        - !GetAtt kafkaClientInstanceSecurityGroup.GroupId
+      ImageId: !Ref KafkaClientEC2InstanceImageId
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            sudo yum update -y
+            sudo yum install java-1.8.0 -y
+            wget https://archive.apache.org/dist/kafka/2.8.1/kafka_2.12-2.8.1.tgz
+            tar -xzf kafka_2.12-2.8.1.tgz
+            cd kafka_2.12-2.8.1
+            CLUSTER_ARN=$(aws kafka list-clusters --region ${AWS::Region} --cluster-name-filter ${project}-${awsEnv}-mskCluster-${AWS::Region} --query "ClusterInfoList[0].ClusterArn" --output text)
+            CONNECT_STR=$(aws kafka describe-cluster --region ${AWS::Region} --cluster-arn $CLUSTER_ARN --query "ClusterInfo.ZookeeperConnectString" --output text)
+            bin/kafka-topics.sh --create --zookeeper $CONNECT_STR --replication-factor 2 --partitions 1 --topic amazon
+            bin/kafka-topics.sh --create --zookeeper $CONNECT_STR --replication-factor 2 --partitions 1 --topic tesla
+      Tags:
+          - Key: Name
+            Value: !Sub ${project}-${awsEnv}-KafkaClientEC2Instance-${AWS::Region}
+          - Key: project
+            Value: !Ref project
+          - Key: environment
+            Value: !Ref awsEnv
+  consumerLambdaFunctionRole: 
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${project}-${awsEnv}-consumerLambdaFunctionRole-${AWS::Region}
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+          - Sid: consumerLambdaFunctionRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: "/"
+      Policies:
+        - PolicyName: MSKConfigurationAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:DescribeSecret
+                - secretsmanager:ListSecrets
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:AmazonMSK_secret_${project}_${awsEnv}*"
+            - Effect: Allow
+              Action:
+                - kafka:ListScramSecrets
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DescribeVpcs
+                - ec2:DeleteNetworkInterface
+                - ec2:DescribeSubnets
+                - ec2:DescribeSecurityGroups
+                - kafka:ListScramSecrets
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - kafka:DescribeCluster
+                - kafka:DescribeClusterV2
+                - kafka:GetBootstrapBrokers
+              Resource:
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:cluster/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:topic/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:group/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+  producerLambdaFunctionRole: 
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${project}-${awsEnv}-producerLambdaFunctionRole-${AWS::Region}
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+          - Sid: producerLambdaFunctionRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess'
+      Path: "/"
+      Policies:
+        - PolicyName: producerLambdaAccess
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - ec2:CreateNetworkInterface
+                - ec2:DeleteNetworkInterface
+                - ec2:DescribeSecurityGroups
+                - ec2:DescribeSubnets
+                - ec2:DescribeVpcs
+                - ec2:DescribeVpcEndpoints
+              Resource:
+                - 'arn:aws:ec2:us-west-2:123456789012:*/*'
+            - Effect: Allow
+              Action:
+                - ec2:DescribeNetworkInterfaces
+              Resource: '*'
+            - Effect: Allow
+              Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DeleteNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcs
+              - ec2:DescribeVpcEndpoints
+              - kms:Decrypt
+              - kms:DescribeKey
+              - kms:CreateGrant
+              - logs:CreateLogDelivery
+              - logs:GetLogDelivery
+              - logs:UpdateLogDelivery
+              - logs:DeleteLogDelivery
+              - logs:ListLogDeliveries
+              - logs:PutResourcePolicy
+              - logs:DescribeResourcePolicies
+              - logs:DescribeLogGroups
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - kafka-cluster:*Topic*
+              - kafka-cluster:Connect
+              - kafka-cluster:AlterCluster
+              - kafka-cluster:DescribeCluster
+              - kafka-cluster:DescribeClusterDynamicConfiguration
+              - kafka-cluster:WriteData
+              - kafka-cluster:ReadData
+              - kafka-cluster:AlterGroup
+              - kafka-cluster:DescribeGroup
+              - kafka-cluster:*Topic*
+              - kafka:GetBootstrapBrokers
+              - secretsmanager:GetSecretValue
+              - secretsmanager:GetRandomPassword
+              Resource:
+                - !GetAtt mskClusterKmsKey.Arn
+                - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:AmazonMSK_secret_${project}_${awsEnv}*
+                - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:*/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:cluster/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:topic/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+                - !Sub arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:group/${project}-${awsEnv}-mskCluster-${AWS::Region}/*
+  producerLambdaFunction:
+    DependsOn: [producerLambdaFunctionRole, mskClusterSecret]
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Role: !GetAtt producerLambdaFunctionRole.Arn
+      FunctionName: !Sub ${project}-${awsEnv}-producerLambdaFunction-${AWS::Region}
+      Timeout: 420
+      Code:
+        S3Bucket: ddb-dev-source-code-us-east-1
+        S3Key: producer.zip
+      Environment:
+        Variables:
+          MSK_CLUSTER_ARN: !GetAtt mskCluster.Arn
+          TOPIC_NAME: amazon
+          MSK_CLUSTER_SECRET_ARN: !Ref mskClusterSecret
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref lambdaSecurityGroup
+        SubnetIds:
+          - !Ref privateSubnet1
+          - !Ref privateSubnet2
+      Layers:
+        - !Ref yfinanceLambdaLayer
+        - !Ref kafkaPythonLambdaLayer
+  producerLambdaFunction2:
+    DependsOn: [producerLambdaFunctionRole, mskClusterSecret]
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Role: !GetAtt producerLambdaFunctionRole.Arn
+      FunctionName: !Sub ${project}-${awsEnv}-producerLambdaFunction2-${AWS::Region}
+      Timeout: 420
+      Code:
+        S3Bucket: ddb-dev-source-code-us-east-1
+        S3Key: producer.zip
+      Environment:
+        Variables:
+          MSK_CLUSTER_ARN: !GetAtt mskCluster.Arn
+          TOPIC_NAME: tesla
+          MSK_CLUSTER_SECRET_ARN: !Ref mskClusterSecret
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref lambdaSecurityGroup
+        SubnetIds:
+          - !Ref privateSubnet1
+          - !Ref privateSubnet2
+      Layers:
+        - !Ref yfinanceLambdaLayer
+        - !Ref kafkaPythonLambdaLayer
+  yfinanceLambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - python3.7
+      Content:
+        S3Bucket: ddb-dev-source-code-us-east-1
+        S3Key: yfinance-layer.zip
+      LayerName: !Sub ${project}-${awsEnv}-yfinanceLambdaLayer-${AWS::Region}
+  kafkaPythonLambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - python3.7
+      Content:
+        S3Bucket: ddb-dev-source-code-us-east-1
+        S3Key: kafka-layer.zip
+      LayerName: !Sub ${project}-${awsEnv}-kafkaPythonLambdaLayer-${AWS::Region}
+  appSyncApi:
+    Type: "AWS::AppSync::GraphQLApi"
+    Properties:
+      Name: !Sub ${project}-${awsEnv}-appSyncApi-${AWS::Region}
+      AuthenticationType: API_KEY
+  appSyncApiSchema:
+    Type: "AWS::AppSync::GraphQLSchema"
+    DependsOn: appSyncApi
+    Properties:
+      ApiId: !GetAtt appSyncApi.ApiId
+      Definition: |
+        schema {
+            query: Query
+            mutation: Mutation
+            subscription: Subscription
+          }
+
+          type Channel {
+            name: String
+            data: AWSJSON
+          }
+
+          type Mutation {
+            publish(name: String!, data: AWSJSON!): Channel
+          }
+
+          type Query {
+            getChannel: Channel
+          }
+
+          type Subscription {
+            subscribe(filter: String): Channel
+              @aws_subscribe(mutations: ["publish"])
+          }
+  appSyncApiDataSource:
+    Type: "AWS::AppSync::DataSource"
+    DependsOn: appSyncApi
+    Properties:
+      ApiId: !GetAtt appSyncApi.ApiId
+      Name: NoneDatasource
+      Type: NONE
+  appSyncApiKey:
+    Type: "AWS::AppSync::ApiKey"
+    DependsOn: appSyncApi
+    Properties:
+      ApiId: !GetAtt appSyncApi.ApiId
+  appSyncApiMutationResolver:
+    Type: "AWS::AppSync::Resolver"
+    DependsOn:
+      - appSyncApiSchema
+      - appSyncApiDataSource
+    Properties:
+      ApiId: !GetAtt appSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: publish
+      DataSourceName: !GetAtt appSyncApiDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "payload": {
+              "name": "$context.arguments.name",
+              "data": $util.toJson($context.arguments.data)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($context.result)
+  appSyncApiSubscriptionResolver:
+    Type: "AWS::AppSync::Resolver"
+    DependsOn:
+      - appSyncApiSchema
+      - appSyncApiDataSource
+    Properties:
+      ApiId: !GetAtt appSyncApi.ApiId
+      TypeName: Subscription
+      FieldName: subscribe
+      Kind: PIPELINE
+      PipelineConfig:
+        Functions:
+          - !GetAtt appSyncApiResolverFunction.FunctionId
+
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "payload": {
+              "name": "$context.arguments.name",
+              "data": $util.toJson($context.arguments.data)
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($context.result)
+  appSyncApiResolverFunction:
+    Type: AWS::AppSync::FunctionConfiguration
+    Properties:
+      ApiId: !GetAtt appSyncApi.ApiId
+      Name: !Ref appSyncApiResolverFunctionName
+      DataSourceName: !GetAtt appSyncApiDataSource.Name
+      FunctionVersion: 2018-05-29
+      Runtime:
+        Name: APPSYNC_JS
+        RuntimeVersion: 1.0.0
+      Code: |
+        import {util, extensions} from '@aws-appsync/utils';
+        export function request(ctx) {
+          return {};
+        }
+        export function response(ctx) {
+          extensions.setSubscriptionFilter(util.transform.toSubscriptionFilter(JSON.parse(ctx.args.filter))); 
+    
+          return JSON.stringify(ctx.result);
+        }
+  consumerLambdaFunction:
+    DependsOn: appSyncApi
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Role: !GetAtt consumerLambdaFunctionRole.Arn
+      FunctionName: !Sub ${project}-${awsEnv}-consumerLambdaFunction-${AWS::Region}
+      Timeout: 420
+      Environment:
+        Variables:
+          APPSYNC_API_ID: !GetAtt appSyncApi.ApiId
+          APPSYNC_API_ENDPOINT: !GetAtt appSyncApi.GraphQLUrl
+          APPSYNC_APIKEY_SECRET_ARN: !Ref appSyncApiKeySecret 
+      Code:
+        S3Bucket: ddb-dev-source-code-us-east-1
+        S3Key: consumer.zip
+  mskClusterKmsKey:
+    Type: 'AWS::KMS::Key'
+    DependsOn: consumerLambdaFunctionRole
+    Properties:
+      Description: A symmetric encryption KMS key
+      EnableKeyRotation: true
+      PendingWindowInDays: 20
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: key-consolepolicy-3
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: 
+              - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:role/${project}-${awsEnv}-consumerLambdaFunctionRole-${AWS::Region}
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource:
+              - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
+          - Sid: Allow attachment of persistent resources
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:role/${project}-${awsEnv}-consumerLambdaFunctionRole-${AWS::Region}
+            Action:
+              - kms:CreateGrant
+              - kms:ListGrants
+              - kms:RevokeGrant
+            Resource:
+              - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
+            Condition:
+              Bool:
+                kms:GrantIsForAWSResource: 'true'
+  kmsAccessPolicy:
+    Type: 'AWS::IAM::Policy'
+    DependsOn:
+      - consumerLambdaFunctionRole
+      - mskClusterKmsKey
+    Properties:
+      PolicyName: kmsAccess
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+            - kms:CreateGrant
+            - kms:DescribeKey
+          Resource:
+            - !GetAtt mskClusterKmsKey.Arn
+      Roles:
+        - !Ref consumerLambdaFunctionRole
+  mskClusterSecret:
+    Type: AWS::SecretsManager::Secret
+    DependsOn: mskClusterKmsKey
+    Properties:
+      Name: !Sub AmazonMSK_secret_${project}_${awsEnv}
+      Description: Msk cluster secret manager
+      KmsKeyId: !Ref mskClusterKmsKey
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "${mskClusterSecretUsername}"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"/\'
+        RequireEachIncludedType: True
+  appSyncApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    DependsOn: mskClusterKmsKey
+    Properties:
+      Name: !Sub AmazonMSK_secret_${project}_${awsEnv}_appSyncApiKey
+      Description: App sync api key secret manager
+      KmsKeyId: !Ref mskClusterKmsKey
+      SecretString: !Sub '{"appSyncApiKey":"${appSyncApiKey.ApiKey}"}'
+  batchScramSecret:
+    DependsOn: mskCluster
+    Type: AWS::MSK::BatchScramSecret
+    Properties:
+      ClusterArn: !GetAtt mskCluster.Arn
+      SecretArnList: 
+        - !Ref mskClusterSecret
+  lambdaEventSourceMapping:
+    DependsOn: batchScramSecret
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt mskCluster.Arn
+      SourceAccessConfigurations:
+        - Type: SASL_SCRAM_512_AUTH
+          URI: !Ref mskClusterSecret
+      FunctionName: !GetAtt consumerLambdaFunction.Arn
+      Topics:
+        - amazon
+  lambdaEventSourceMapping2:
+    DependsOn: batchScramSecret
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt mskCluster.Arn
+      SourceAccessConfigurations:
+        - Type: SASL_SCRAM_512_AUTH
+          URI: !Ref mskClusterSecret
+      FunctionName: !GetAtt consumerLambdaFunction.Arn
+      Topics:
+        - tesla
+  
+Outputs:
+  vpcId:
+    Description: Vpc
+    Value: !Ref vpc
+    Export:
+      Name: !Sub ${project}-${awsEnv}-vpcId-${AWS::Region}
+  publicSubnet1:
+    Description: Public subnet 1
+    Value: !Ref publicSubnet1
+    Export:
+      Name: !Sub ${project}-${awsEnv}-publicSubnet1-${AWS::Region}
+  publicSubnet2:
+    Description: Public subnet 2
+    Value: !Ref publicSubnet2
+    Export:
+      Name: !Sub ${project}-${awsEnv}-publicSubnet2-${AWS::Region}
+  privateSubnet1:
+    Description: Private subnet 1
+    Value: !Ref privateSubnet1
+    Export:
+      Name: !Sub ${project}-${awsEnv}-privateSubnet1-${AWS::Region}
+  privateSubnet2:
+    Description: Private subnet 2
+    Value: !Ref privateSubnet2
+    Export:
+      Name: !Sub ${project}-${awsEnv}-privateSubnet2-${AWS::Region}
+  publicRouteTable:
+    Description: Public route table
+    Value: !Ref publicRouteTable
+    Export:
+      Name: !Sub ${project}-${awsEnv}-publicRouteTable-${AWS::Region}
+  privateRouteTable1:
+    Description: Private route table 1
+    Value: !Ref privateRouteTable1
+    Export:
+      Name: !Sub ${project}-${awsEnv}-privateRouteTable1-${AWS::Region}
+  privateRouteTable2:
+    Description: Private route table 2
+    Value: !Ref privateRouteTable2
+    Export:
+      Name: !Sub ${project}-${awsEnv}-privateRouteTable2-${AWS::Region}
+  publicSubnetsNacl:
+    Description: Public subnets Nacl
+    Value: !Ref publicSubnetsNacl
+    Export:
+      Name: !Sub ${project}-${awsEnv}-publicSubnetsNacl-${AWS::Region}
+  privateSubnetsNacl:
+    Description: Private subnets Nacl
+    Value: !Ref privateSubnetsNacl
+    Export:
+      Name: !Sub ${project}-${awsEnv}-privateSubnetsNacl-${AWS::Region}
+  kafkaClientInstanceSecurityGroup:
+    Description: Kafka client ec2 instance security group Id
+    Value: !GetAtt kafkaClientInstanceSecurityGroup.GroupId
+    Export:
+      Name: !Sub ${project}-${awsEnv}-kafkaClientInstanceSecurityGroup-${AWS::Region}
+  mskClusterSecurityGroup:
+    Description: Msk Security Group Id
+    Value: !Ref mskClusterSecurityGroup
+    Export:
+      Name: !Sub ${project}-${awsEnv}-mskClusterSecurityGroup-${AWS::Region}
+  mskCluster:
+    Description: Msk Cluster
+    Value: !Ref mskCluster
+    Export:
+      Name: !Sub ${project}-${awsEnv}-mskCluster-${AWS::Region}
+  KafkaClientEC2Instance:
+    Description: Kafka client ec2 instance Id
+    Value: !Ref KafkaClientEC2Instance
+    Export:
+      Name: !Sub ${project}-${awsEnv}-KafkaClientEC2Instance-${AWS::Region}
+  KafkaClientEC2InstanceIamRole:
+    Description: Arn of ec2 instance role
+    Value: !GetAtt KafkaClientEC2InstanceIamRole.Arn
+    Export:
+      Name: !Sub ${project}-${awsEnv}-KafkaClientEC2InstanceIamRole-${AWS::Region}
+  eC2InstanceProfile:
+    Description: Id of ec2 instance profile
+    Value: !Ref eC2InstanceProfile
+    Export:
+      Name: !Sub ${project}-${awsEnv}-eC2InstanceProfile-${AWS::Region}
+  producerLambdaFunctionRole:
+    Description: Arn of lambda function role 
+    Value: !Ref producerLambdaFunctionRole
+    Export:
+      Name: !Sub ${project}-${awsEnv}-producerLambdaFunctionRole-${AWS::Region}
+  consumerLambdaFunctionRole:
+    Description: Arn of lambda function role 
+    Value: !Ref consumerLambdaFunctionRole
+    Export:
+      Name: !Sub ${project}-${awsEnv}-consumerLambdaFunctionRole-${AWS::Region}
+  lambdaSecurityGroup:
+    Description: Lambda function securitygroup Id
+    Value: !Ref lambdaSecurityGroup
+    Export:
+      Name: !Sub ${project}-${awsEnv}-lambdaSecurityGroup-${AWS::Region}
+  producerLambdaFunction:
+    Description: Producer lambda function 1 Id
+    Value: !Ref producerLambdaFunction
+    Export:
+      Name: !Sub ${project}-${awsEnv}-producerLambdaFunction-${AWS::Region}
+  producerLambdaFunction2:
+    Description: Producer lambda function 2 Id
+    Value: !Ref producerLambdaFunction2
+    Export:
+      Name: !Sub ${project}-${awsEnv}-producerLambdaFunction2-${AWS::Region}
+  yfinanceLambdaLayer:
+    Description: Lambda layer version 1 Id
+    Value: !Ref yfinanceLambdaLayer
+    Export:
+      Name: !Sub ${project}-${awsEnv}-yfinanceLambdaLayer-${AWS::Region}
+  kafkaPythonLambdaLayer:
+    Description: Lambda layer version 2 Id
+    Value: !Ref kafkaPythonLambdaLayer
+    Export:
+      Name: !Sub ${project}-${awsEnv}-kafkaPythonLambdaLayer-${AWS::Region}
+  consumerLambdaFunction:
+    Description: Consumer lambda function Id
+    Value: !Ref consumerLambdaFunction
+    Export:
+      Name: !Sub ${project}-${awsEnv}-consumerLambdaFunction-${AWS::Region}
+  lambdaEventSourceMapping:
+    Description: Lambda event source mapping Id
+    Value: !Ref lambdaEventSourceMapping
+    Export:
+      Name: !Sub ${project}-${awsEnv}-lambdaEventSourceMapping-${AWS::Region}
+  lambdaEventSourceMapping2:
+    Description: Lambda event source mapping Id
+    Value: !Ref lambdaEventSourceMapping2
+    Export:
+      Name: !Sub ${project}-${awsEnv}-lambdaEventSourceMapping2-${AWS::Region}
+  appSyncApi:
+    Description: Appsync Id
+    Value: !Ref appSyncApi
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appSyncApi-${AWS::Region}
+  appSyncApiSchema:
+    Description: App sync schema Id
+    Value: !Ref appSyncApiSchema
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appSyncApiSchema-${AWS::Region}
+  appSyncApiDataSource:
+    Description: Appsync datasource Id
+    Value: !Ref appSyncApiDataSource
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appSyncApiDataSource-${AWS::Region}
+  appsyncApiId:
+    Description: Appsync api Id
+    Value: !GetAtt appSyncApi.ApiId
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appsyncApiId-${AWS::Region}
+  appsyncApiEndpoint:
+    Description: The URL to the appsync endpoint
+    Value: !GetAtt appSyncApi.GraphQLUrl
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appsyncApiEndpoint-${AWS::Region}
+  appSyncApiMutationResolver:
+    Description: Mutation resolver Arn
+    Value: !Ref appSyncApiMutationResolver
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appSyncApiMutationResolver-${AWS::Region}
+  appSyncApiSubscriptionResolver:
+    Description: Appsync resolver Arn
+    Value: !Ref appSyncApiSubscriptionResolver
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appSyncApiSubscriptionResolver-${AWS::Region}
+  appSyncApiResolverFunction:
+    Description: Resolver function Arn
+    Value: !Ref appSyncApiResolverFunction
+    Export:
+      Name: !Sub ${project}-${awsEnv}-appSyncApiResolverFunction-${AWS::Region}
