@@ -1,5 +1,7 @@
 ## Real-time data distribution with Amazon MSK and AWS AppSync
 
+_Editor's note: This solution was developed in collaboration with AWS APN Partner [NETSOL Technologies](https://netsolcloudservices.com/real-time-data-distribution-code-base/)._
+
 Businesses and applications nowadays are expected to provide an engaging experience to users; hence real-time access to data is crucial. Technologies like WebSockets make it possible for various solutions, including live sports scores, chat applications, dashboards, and collaborative tools, to function efficiently by delivering real-time data updates to clients, a process that is significantly faster than client polling for new data. As the application's user base grows, manually managing a real-time backend that scales to meet user growth becomes cumbersome.
 
 AWS AppSync provides the utility of GraphQL subscriptions to perform real-time operations by pushing data to clients that listen to specific events. Many backend services like AWS Managed Streaming for Apache Kafka (MSK) and AWS Lambda can be paired with AppSync. Connections, scalability, fan-out, and broadcasting are all handled by AppSync, allowing you to focus on your business use cases and requirements instead of dealing with the complex infrastructure required to manage Web Sockets connections at scale.
