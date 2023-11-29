@@ -13,62 +13,70 @@ In this blog, we will discuss how to configure and utilize Amazon Managed Stream
 ![msk-appsync-solution-architecture](https://user-images.githubusercontent.com/1624530/235167527-1e5b260e-db04-4d92-8b8f-bf395aaea79c.png)
 
 The following are descriptions of the numbered architectural features from the diagram:
-1.	MSK Producer lambda fetches data from data source after specific intervals and pushes the data in a specific MSK topic
-2.	AWS MSK ensures the order of the data inside each topic. For each topic a Consumer lambda is integrated to be triggered as soon as the data arrives.
-3.	MSK consumer performs required transformations and executes AppSync mutation with the transformed data
-4.	AWS AppSync subscription mapped to the executed mutation broadcasts data to all the connected clients
+
+1. MSK Producer lambda fetches data from data source after specific intervals and pushes the data in a specific MSK topic
+2. AWS MSK ensures the order of the data inside each topic. For each topic a Consumer lambda is integrated to be triggered as soon as the data arrives.
+3. MSK consumer performs required transformations and executes AppSync mutation with the transformed data
+4. AWS AppSync subscription mapped to the executed mutation broadcasts data to all the connected clients
 
 ## Requirements
 
-* [Create an AWS account](https://portal.aws.amazon.com/gp/aws/developer/registration/index.html) if you do not already have one and log in. The IAM user that you use must have sufficient permissions to make necessary AWS service calls and manage AWS resources.
-* [Node and NPM](https://nodejs.org/en/download/) installed
-* [Amplify CLI](https://docs.amplify.aws/cli/start/install/), only required to generate graphql code
+- [Create an AWS account](https://portal.aws.amazon.com/gp/aws/developer/registration/index.html) if you do not already have one and log in. The IAM user that you use must have sufficient permissions to make necessary AWS service calls and manage AWS resources.
+- [Node and NPM](https://nodejs.org/en/download/) installed
+- [Amplify CLI](https://docs.amplify.aws/cli/start/install/), only required to generate graphql code
 
 ## Configuration Steps
-To setup the solution discussed above you will need to provision following resources:
-1.	Setup Amazon VPC
-2.	Setup IAM Roles for Lambda Functions
-3.	Setup Custom KMS Key
-4.	Setup Secret Manager Parameter for MSK
-5.	Setup Amazon Managed Streaming for Apache Kafka (MSK)
-6.	Setup Bastion Host
-7.	Configure Topics in MSK Cluster
-8.	Setup AppSync API
-9.	Setup Secret Manager Parameter for AppSync
-10.	Update IAM Role for Lambda Functions
-11.	Setup Producer and Consumer Lambdas
-12.	Setup React application on AWS S3
 
-We provide a cloud formation template to provision the first 11 steps.
+Following resources will be provisioned as part of CloudFormation template launch (Step 1 to 11):
+
+1. Amazon VPC
+2. IAM Roles for Lambda Functions
+3. Custom KMS Key
+4. Secret Manager Parameter for MSK
+5. Amazon Managed Streaming for Apache Kafka (MSK)
+6. Bastion Host
+7. Configure Topics in MSK Cluster
+8. AppSync API
+9. Secret Manager Parameter for AppSync
+10. Update IAM Role for Lambda Functions
+11. Producer and Consumer Lambdas
 
 To launch the CloudFormation template:
-1.	Use a git client to clone the project GitHub repository to a local directory.
-2.	In your AWS console, navigate to CloudFormation.
-3.	Click “Create stack” with new resources (standard).
-4.	Choose “Template is ready” and “Upload a template file”.
-5.	Select “Choose file” and upload the file amazon-msk-appsync-datadistribution.yml in your local project “cloudformation” directory.
-6.	Create a stack name (i.e. “NETSOL-Data-Distribution-Solution”)
-7.	Review the parameters and click “Next”.
-8.	Click the check box "I acknowledge that AWS CloudFormation might create IAM resources with customer names" then click “Submit”.
 
-## Configure the React.js client
+1. Use a git client to clone the project GitHub repository to a local directory.
+2. In your AWS console, navigate to CloudFormation.
+3. Click “Create stack” with new resources (standard).
+4. Choose “Template is ready” and “Upload a template file”.
+5. Select “Choose file” and upload the file amazon-msk-appsync-datadistribution.yml in your local project “cloudformation” directory.
+6. Create a stack name (i.e. “NETSOL-Data-Distribution-Solution”)
+7. Review the parameters and click “Next”.
+8. Click the check box "I acknowledge that AWS CloudFormation might create IAM resources with customer names" then click “Submit”.
 
-1. Install the project dependencies:
+## Configure the React.js client Application
+
+1. Clone the respository and Navigate into **react-client** directory
+
+2. Install the project dependencies listed in package.json:
 
    ```sh
    npm install
    ```
-2. Copy Appsync API details (API Id, API key, API url) from the settings section of the deployed API inside aws appsync console
 
-3. Open the file `.env` and update the AppSync API configuration details based on the values copied above.
+3. Navigate into AWS AppSync console settings section and copy AppSync API details (API ID, API Key, GraphQL Endpoint URL) for the deployed API
 
-4. Name of the channels are already defined in `src/constants.js`. Same channel names will be used when sending data from backend source
+4. In the current directory create  a file named `.env` and paste the following. Replace the corresponding values copied in previous step:
+
+   ```sh
+   REACT_APP_APPSYNC_URL={Replace graphql endpoint here}
+   REACT_APP_APPSYNC_API_KEY={Replace api key here}
+   ```
 
 5. Generate the necessary code to interact with the API using the [Amplify CodeGen](https://docs.amplify.aws/cli/graphql-transformer/codegen/) with the API ID saved previously from the console. There's no need to create an Amplify CLI project. Execute the following command accepting all defaults:
 
    ```sh
-   amplify add codegen --apiId xxxxxxxxxxxxxxxxxxxxxx
+   amplify add codegen --apiId {Replace api id here}
    ```
+
 6. Verify that **graphql** folder is created inside **src** folder, containing following files:
    ```
    mutations.js
@@ -77,10 +85,72 @@ To launch the CloudFormation template:
    ```
 7. Execute the application and access at http://localhost:3000:
 
-    ```bash
-    npm start
-    ```
-    
+   ```bash
+   npm start
+   ```
+
+## Testing the solution
+1. Log into the Access the AWS Management Console
+2. Navigate to AWS Lambda Service
+3. Locate the Lambda Functions with the name having following pattern:
+
+   `${project}-${awsEnv}-producerLambdaFunction-${AWS::Region}`
+   `${project}-${awsEnv}-producerLambdaFunction2-${AWS::Region}`
+
+4. Open the Lambda function details page. Click on the `Test` button.
+5. In the `Configure test event` pop up, select an existing test event or create a new one with default settings.
+6. Once a test event is selected or created, click the `Test` button to invoke the Lambda function.
+8. Repeat for steps 4 to 6 for the Second Lambda Function as well
+9. Open the react application accessible at http://localhost:3000 to receive data from appsync.
+
+
+## Sending Data from MSK to AppSync using Python
+<br>
+
+### Code Explanation:
+
+The code snippet below demonstrates how to prepare and execute a mutation request to send data from an MSK topic to an AppSync API using Python's requests library.
+
+<br>
+
+### Setting Up Header and Payload:
+<br>
+The following Python code sets up the necessary header containing the AppSync API key for authentication and constructs the payload, which contains the data sent by MSK topic, to be sent in the mutation.
+
+   ```sh
+   appsync_header = {
+        "Content-Type": "application/json",
+        "x-api-key": appsync_api_key
+    }
+   kafka_payload = {
+                'topic': record_data[0]['topic'],
+                'value': base64.b64decode(record_data[0]['value']).decode('utf-8')
+            }
+   variables = {
+             "channelName": record_data[0]['topic'], "testData": json.dumps(kafka_payload)}
+   query = """
+    mutation publishData($channelName: String!, $testData: AWSJSON!){
+        publish(name:$channelName, data: $testData) {
+            data
+            name
+        }
+    }"""
+   payload = {"query": query, 'variables': variables}
+   ```
+
+### Executing the Mutation:
+<br>
+Once the header and payload are prepared, the mutation is invoked by making a POST request to the AppSync endpoint with the defined header and payload.
+
+   ```sh
+   response = requests.post(
+      appsync_endpoint,
+      json=payload,
+      headers=appsync_header
+   ).json()
+
+   ```
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
@@ -88,4 +158,3 @@ See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more inform
 ## License
 
 This library is licensed under the MIT-0 License. See the LICENSE file.
-
